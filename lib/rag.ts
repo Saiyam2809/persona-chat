@@ -14,6 +14,7 @@
 
 import { index } from "./pinecone";
 import { Persona } from "@/types/chat";
+import { getEmbedding } from "./embeddings";
 import OpenAI from "openai";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -60,14 +61,8 @@ export async function searchKnowledgeBase(
   persona: string,
   topK = TOP_K
 ): Promise<SearchResult[]> {
-  const openai = getOpenAI();
-
   // Step 1: Embed the query
-  const embResponse = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: query.replace(/\n/g, " "),
-  });
-  const queryVector = embResponse.data[0].embedding;
+  const queryVector = await getEmbedding(query);
 
   // Step 2: Semantic search in Pinecone, filtered by persona
   const result = await index.query({
