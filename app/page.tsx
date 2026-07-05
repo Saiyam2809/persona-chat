@@ -1,65 +1,175 @@
-import Image from "next/image";
+"use client";
 
+import React, { useState, useCallback } from "react";
+import MainLayout from "@/components/layout/MainLayout";
+import ChatWindow from "@/components/chat/ChatWindow";
+import ChatInput from "@/components/chat/ChatInput";
+import { Message, Persona } from "@/types/chat";
+import { PERSONAS } from "@/lib/constants";
+
+// ─── Initial state ────────────────────────────────────────────────────────────
+const INITIAL_MESSAGES: Message[] = [
+  {
+    id: "init-1",
+    role: "assistant",
+    content: "Hi! I'm ready to help. Ask me anything about web development.",
+    timestamp: new Date(),
+  },
+];
+
+// ─── Page Component ───────────────────────────────────────────────────────────
 export default function Home() {
+  const [selectedPersona, setSelectedPersona] = useState<Persona>("hitesh");
+  const [messagesByPersona, setMessagesByPersona] = useState<
+    Record<Persona, Message[]>
+  >({
+    hitesh: [...INITIAL_MESSAGES],
+    piyush: [],
+  });
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const currentPersonaInfo = PERSONAS.find((p) => p.id === selectedPersona)!;
+  const messages = messagesByPersona[selectedPersona];
+
+  // ── Handle persona switch ──────────────────────────────────────────────────
+  const handlePersonaChange = useCallback((persona: Persona) => {
+    setSelectedPersona(persona);
+    setInput("");
+    setIsLoading(false);
+  }, []);
+
+  // ── Send/Stream message handler ────────────────────────────────────────────
+  const sendMessage = useCallback(async (text: string, persona: Persona) => {
+    const cleanText = text.trim();
+    if (!cleanText || isLoading) return;
+
+    setInput("");
+    setIsLoading(true);
+
+    // Snapshot history BEFORE adding new messages
+    const currentHistory = messagesByPersona[persona];
+
+    // Create message objects
+    const userMsg: Message = {
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      role: "user",
+      content: cleanText,
+      timestamp: new Date(),
+    };
+
+    const assistantMsgId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const assistantMsgPlaceholder: Message = {
+      id: assistantMsgId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+    };
+
+    // Update state to render user message and empty typing bubble
+    setMessagesByPersona((prev) => ({
+      ...prev,
+      [persona]: [...prev[persona], userMsg, assistantMsgPlaceholder],
+    }));
+
+    // Build payload including the new user message
+    const apiMessages = [
+      ...currentHistory.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user" as const, content: cleanText },
+    ];
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: apiMessages, persona }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error ?? "Failed to get response.");
+      }
+
+      // Parse sources from response header (if any)
+      const sourcesHeader = res.headers.get("x-sources");
+      const sources = sourcesHeader ? JSON.parse(sourcesHeader) : undefined;
+
+      if (sources) {
+        setMessagesByPersona((prev) => ({
+          ...prev,
+          [persona]: prev[persona].map((m) =>
+            m.id === assistantMsgId ? { ...m, sources } : m
+          ),
+        }));
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response stream available.");
+      }
+
+      let done = false;
+      let accumulatedContent = "";
+
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+          const chunk = decoder.decode(value, { stream: !done });
+          accumulatedContent += chunk;
+          
+          setMessagesByPersona((prev) => ({
+            ...prev,
+            [persona]: prev[persona].map((m) =>
+              m.id === assistantMsgId ? { ...m, content: accumulatedContent } : m
+            ),
+          }));
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      setMessagesByPersona((prev) => ({
+        ...prev,
+        [persona]: prev[persona].map((m) =>
+          m.id === assistantMsgId ? { ...m, content: `⚠️ ${msg}` } : m
+        ),
+      }));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isLoading, messagesByPersona]);
+
+  // ── Input send triggers ────────────────────────────────────────────────────
+  const handleSend = useCallback(() => {
+    sendMessage(input, selectedPersona);
+  }, [input, selectedPersona, sendMessage]);
+
+  const handleExampleClick = useCallback((prompt: string) => {
+    sendMessage(prompt, selectedPersona);
+  }, [selectedPersona, sendMessage]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <MainLayout
+      selectedPersona={selectedPersona}
+      onPersonaChange={handlePersonaChange}
+    >
+      <div className="chat-area">
+        <ChatWindow
+          messages={messages}
+          persona={currentPersonaInfo}
+          isLoading={isLoading}
+          onExampleClick={handleExampleClick}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={handleSend}
+          isLoading={isLoading}
+        />
+      </div>
+    </MainLayout>
   );
 }
+

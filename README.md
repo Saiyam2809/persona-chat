@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Persona Chat
 
-## Getting Started
+A RAG-powered chatbot simulating the distinct teaching styles of prominent software engineering educators: **Hitesh Choudhary** (practical, conversational, beginner-friendly mentor) and **Piyush Garg** (precise, backend-focused senior engineer analyzing system tradeoffs).
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+User Question
+      │
+      ▼
+Generate Embedding (text-embedding-3-small)
+      │
+      ▼
+Pinecone Filtered Search (filtered by persona)
+      │
+      ▼
+Top 5 Relevant Chunks
+      │
+      ▼
+Build Prompt (PromptBuilder: Base + Persona + Context + Memory Summary)
+      │
+      ▼
+OpenAI Stream (gpt-4o-mini)
+      │
+      ▼
+Real-time Stream + Sources HTTP Header
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Features
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Dual Persona Simulation**: Switches dynamically between Hitesh Choudhary and Piyush Garg, using custom system instructions and few-shot examples to dictate tone, structure, and communication preferences.
+2. **Retrieval-Augmented Generation (RAG)**: Connects to a Pinecone vector database populated with curated documentation from their websites, YouTube channel focus areas, blogs, and public talks.
+3. **Real-time Streaming**: Renders the AI completion character-by-character as it is generated, leveraging browser-native chunk streams.
+4. **Source Attribution & Citations**: Dynamically extracts context document reference links (e.g. YouTube channels, blogs) from Pinecone metadata, deduplicates them, and renders clickable badges at the bottom of message bubbles.
+5. **Sliding Window Memory**: Sends up to 20 messages of intact history. Beyond that, compresses older turns into a single paragraph summary and appends the active 10 messages window to prevent token overflow.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tech Stack
 
-## Learn More
+* **Frontend**: Next.js 16 (App Router), React 19, Tailwind CSS v4, Lucide React, Framer Motion
+* **Vector DB**: Pinecone client
+* **Embeddings & LLM**: OpenAI (`text-embedding-3-small`, `gpt-4o-mini`)
+* **Parsers**: gray-matter, glob
 
-To learn more about Next.js, take a look at the following resources:
+## Environment Variables
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Create a `.env.local` file in the root directory:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+OPENAI_API_KEY=your_openai_key
+PINECONE_API_KEY=your_pinecone_key
+PINECONE_INDEX=persona-chat
+```
 
-## Deploy on Vercel
+## Setup & Running Locally
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+2. **Ingest Knowledge Base**:
+   Create a Pinecone index named `persona-chat` with **1536 dimensions** and **cosine metric**. Then, run the ingestion script:
+   ```bash
+   npm run kb:ingest
+   ```
+
+3. **Start the development server**:
+   ```bash
+   npm run dev
+   ```
+
+4. **Verify search quality**:
+   ```bash
+   npm run kb:search "how to learn react" hitesh
+   ```
+
+## Folder Structure
+
+```
+├── app/
+│   ├── api/chat/route.ts  # Streaming & RAG API
+│   ├── globals.css        # Animations & Dark Theme
+│   ├── layout.tsx
+│   └── page.tsx           # Page Hub & Stream Reader
+├── components/            # UI components (Sidebar, ChatWindow, MessageBubble)
+├── data/                  # Curated Knowledge Base (.md files by persona)
+├── docs/                  # Architecture, prompts, RAG, memory documentation
+├── lib/                   # Pinecone & OpenAI clients, PromptBuilder, RAG core
+├── scripts/               # chunk, embed, ingest, search scripts
+└── types/                 # Typescript interfaces
+```
