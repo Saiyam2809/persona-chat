@@ -5,6 +5,40 @@ import { Persona } from "@/types/chat";
 
 const VALID_PERSONAS: Persona[] = ["hitesh", "piyush"];
 
+// ─── Zero-Token Local Classifier Patterns ─────────────────────────────────────
+const GREETING_PATTERNS = [
+  /^(hi|hello|hey|yo|hola)$/i,
+  /\b(wassup|whats\s*up|hey\s*buddy)\b/i
+];
+
+const IDLE_PATTERNS = [
+  /\b(time\s*pass|timepass|gup\s*shup)\b/i,
+  /\b(kaise\s*ho|kese\s*ho|kase\s*ho|kya\s*hal|kya\s*haal)\b/i,
+  /\b(how\s*are\s*you|fine|sab\s*badhiya|chitchat|chit\s*chat)\b/i
+];
+
+function classifyMessage(text: string): "greeting" | "idle" | "normal" {
+  const clean = text.trim();
+  if (GREETING_PATTERNS.some((p) => p.test(clean))) {
+    return "greeting";
+  }
+  if (IDLE_PATTERNS.some((p) => p.test(clean))) {
+    return "idle";
+  }
+  return "normal";
+}
+
+const STATIC_RESPONSES = {
+  hitesh: {
+    greeting: "Hanji! Main ready hoon. Web development, JavaScript, React, ya tech roadmaps ke baare mein poocho. Code toh likhna padega! 😉",
+    idle: "Dekho buddy, time pass ke liye toh bohot saari jagah hai, par yahan hum sirf coding seekhne ke liye hain! Agar JavaScript, React, ya DevOps seekhna hai toh poocho."
+  },
+  piyush: {
+    greeting: "Hello! I'm here to help with backend engineering, cloud infrastructure, databases, and system design. Let me know what you are building.",
+    idle: "Let's focus on engineering. I only discuss software architecture, system design, and database trade-offs. Let me know if you have a technical query."
+  }
+};
+
 interface RateLimitBucket {
   count: number;
   resetTime: number;
@@ -75,9 +109,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Fetch sources from Pinecone filtered by persona for citation mapping
     const lastUserMessage =
       [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+
+    // 1. Run local zero-token classifier to block idle/general messages
+    const classification = classifyMessage(lastUserMessage);
+
+    if (classification !== "normal") {
+      const staticReply = STATIC_RESPONSES[persona][classification];
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(staticReply));
+          controller.close();
+        }
+      });
+
+      const headers = new Headers({
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+
+      console.log(`[Classifier] Bypassed API call for "${classification}" query from IP ${ip} (0 tokens used)`);
+      return new Response(stream, { headers });
+    }
+
+    // 2. Fetch sources from Pinecone filtered by persona for citation mapping
 
     let sourceCitations: Array<{ title: string; source: string; url: string }> = [];
 
