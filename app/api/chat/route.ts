@@ -5,8 +5,56 @@ import { Persona } from "@/types/chat";
 
 const VALID_PERSONAS: Persona[] = ["hitesh", "piyush"];
 
+interface RateLimitBucket {
+  count: number;
+  resetTime: number;
+}
+
+const rateLimitMap = new Map<string, RateLimitBucket>();
+const LIMIT_WINDOW_MS = 2 * 60 * 1000; // 2 minutes window
+const MAX_REQUESTS = 10; // Max 10 requests per 2 minutes per IP
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+
+  // Prevent memory growth leak by pruning expired buckets
+  if (rateLimitMap.size > 1000) {
+    for (const [key, bucket] of rateLimitMap.entries()) {
+      if (now > bucket.resetTime) {
+        rateLimitMap.delete(key);
+      }
+    }
+  }
+
+  const bucket = rateLimitMap.get(ip);
+
+  if (!bucket) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + LIMIT_WINDOW_MS });
+    return false;
+  }
+
+  if (now > bucket.resetTime) {
+    bucket.count = 1;
+    bucket.resetTime = now + LIMIT_WINDOW_MS;
+    return false;
+  }
+
+  bucket.count++;
+  return bucket.count > MAX_REQUESTS;
+}
+
 export async function POST(req: NextRequest) {
   try {
+    // Extract IP address from request headers
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "127.0.0.1";
+
+    if (checkRateLimit(ip)) {
+      return NextResponse.json(
+        { error: "Too many requests! Please wait a couple of minutes before sending more messages to conserve API tokens." },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const messages: ChatMessage[] = body.messages;
     const persona: Persona = body.persona;
