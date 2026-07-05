@@ -54,9 +54,9 @@ export async function getChatResponseStream(
   let activeMessages = messages.filter((m) => m.role !== "system");
   let summary = "";
 
-  if (activeMessages.length > 20) {
-    // Keep last 10 messages as active conversation window
-    const splitIndex = activeMessages.length - 10;
+  if (activeMessages.length > 8) {
+    // Keep last 6 messages as active conversation window
+    const splitIndex = activeMessages.length - 6;
     const toSummarize = activeMessages.slice(0, splitIndex);
     activeMessages = activeMessages.slice(splitIndex);
 
@@ -85,7 +85,7 @@ export async function getChatResponseStream(
       { role: "system", content: systemPrompt },
       ...activeMessages,
     ],
-    max_tokens: 1024,
+    max_tokens: 300,
     temperature: 0.7,
     stream: true,
   });
@@ -109,8 +109,8 @@ export async function getChatResponse(
   let activeMessages = messages.filter((m) => m.role !== "system");
   let summary = "";
 
-  if (activeMessages.length > 20) {
-    const splitIndex = activeMessages.length - 10;
+  if (activeMessages.length > 8) {
+    const splitIndex = activeMessages.length - 6;
     const toSummarize = activeMessages.slice(0, splitIndex);
     activeMessages = activeMessages.slice(splitIndex);
     try {
@@ -134,7 +134,7 @@ export async function getChatResponse(
       { role: "system", content: systemPrompt },
       ...activeMessages,
     ],
-    max_tokens: 1024,
+    max_tokens: 300,
     temperature: 0.7,
   });
 
