@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getChatResponseStream, ChatMessage } from "@/lib/ai";
 import { searchKnowledgeBase } from "@/lib/rag";
 import { Persona } from "@/types/chat";
+import { logUsage } from "@/lib/logger";
 
 const VALID_PERSONAS: Persona[] = ["hitesh", "piyush"];
 
@@ -78,20 +79,29 @@ function checkRateLimit(ip: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    // Extract IP address from request headers
-    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "127.0.0.1";
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "127.0.0.1";
+  let lastUserMessage = "";
+  let persona: Persona = "hitesh";
 
+  try {
+    const body = await req.json();
+    const messages: ChatMessage[] = body.messages || [];
+    persona = body.persona;
+    lastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+
+    // 1. Rate limiting check with audit log
     if (checkRateLimit(ip)) {
+      logUsage({
+        ip,
+        query: lastUserMessage,
+        persona,
+        type: "rate_limited"
+      });
       return NextResponse.json(
         { error: "Too many requests! Please wait a couple of minutes before sending more messages to conserve API tokens." },
         { status: 429 }
       );
     }
-
-    const body = await req.json();
-    const messages: ChatMessage[] = body.messages;
-    const persona: Persona = body.persona;
 
     // Validate messages
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -109,10 +119,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const lastUserMessage =
-      [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-
-    // 1. Run local zero-token classifier to block idle/general messages
+    // 2. Run local zero-token classifier to block idle/general messages
     const classification = classifyMessage(lastUserMessage);
 
     if (classification !== "normal") {
@@ -131,12 +138,21 @@ export async function POST(req: NextRequest) {
         Connection: "keep-alive",
       });
 
-      console.log(`[Classifier] Bypassed API call for "${classification}" query from IP ${ip} (0 tokens used)`);
+      // Log bypassed interaction
+      logUsage({
+        ip,
+        query: lastUserMessage,
+        persona,
+        type: classification,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0
+      });
+
       return new Response(stream, { headers });
     }
 
-    // 2. Fetch sources from Pinecone filtered by persona for citation mapping
-
+    // 3. Fetch sources from Pinecone filtered by persona for citation mapping
     let sourceCitations: Array<{ title: string; source: string; url: string }> = [];
 
     // Only query if Pinecone is configured
@@ -153,19 +169,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Start the OpenAI chat completion stream
+    // 4. Start the OpenAI chat completion stream
     const completionStream = await getChatResponseStream(messages, persona);
 
-    // 3. Pipe completion chunks into a ReadableStream response
+    // 5. Pipe completion chunks into a ReadableStream response and track token metrics
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         try {
+          let finalUsage: any = null;
           for await (const chunk of completionStream) {
             const text = chunk.choices[0]?.delta?.content || "";
             if (text) {
               controller.enqueue(encoder.encode(text));
             }
+            // Capture usage metrics chunk
+            if (chunk.usage) {
+              finalUsage = chunk.usage;
+            }
+          }
+
+          if (finalUsage) {
+            logUsage({
+              ip,
+              query: lastUserMessage,
+              persona,
+              type: "normal",
+              promptTokens: finalUsage.prompt_tokens,
+              completionTokens: finalUsage.completion_tokens,
+              totalTokens: finalUsage.total_tokens
+            });
           }
         } catch (err) {
           console.error("[/api/chat stream] Pipe error:", err);
@@ -189,8 +222,14 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[/api/chat] error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "An unexpected error occurred.";
+    const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+    logUsage({
+      ip,
+      query: lastUserMessage || "unknown",
+      persona: persona || "unknown",
+      type: "error",
+      error: message
+    });
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

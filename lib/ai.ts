@@ -88,6 +88,7 @@ export async function getChatResponseStream(
     max_tokens: 300,
     temperature: 0.7,
     stream: true,
+    stream_options: { include_usage: true },
   });
 
   return completionStream;
